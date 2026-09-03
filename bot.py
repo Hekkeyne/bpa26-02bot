@@ -459,6 +459,7 @@ SCHEDULE = {
   }
 }
 
+
 class DatabaseManager:
     def __init__(self):
         self.init_db()
@@ -474,6 +475,12 @@ class DatabaseManager:
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+            cursor = conn.execute("PRAGMA table_info(bot_messages)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'message_type' not in columns:
+                conn.execute("ALTER TABLE bot_messages ADD COLUMN message_type TEXT DEFAULT 'manual'")
+
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id INTEGER PRIMARY KEY,
@@ -508,17 +515,18 @@ class DatabaseManager:
                 )
             ''')
 
-    def save_message(self, chat_id, user_id, message_id):
+    def save_message(self, chat_id, user_id, message_id, msg_type='manual'):
         with sqlite3.connect("schedule_bot.db") as conn:
-            conn.execute('DELETE FROM bot_messages WHERE chat_id = ? AND user_id = ?', (chat_id, user_id))
-            conn.execute('INSERT INTO bot_messages (chat_id, user_id, message_id) VALUES (?, ?, ?)',
-                         (chat_id, user_id, message_id))
+            conn.execute('DELETE FROM bot_messages WHERE chat_id = ? AND user_id = ? AND message_type = ?', 
+                         (chat_id, user_id, msg_type))
+            conn.execute('INSERT INTO bot_messages (chat_id, user_id, message_id, message_type) VALUES (?, ?, ?, ?)',
+                         (chat_id, user_id, message_id, msg_type))
 
-    def get_last_message(self, chat_id, user_id):
+    def get_last_message(self, chat_id, user_id, msg_type='manual'):
         with sqlite3.connect("schedule_bot.db") as conn:
             cur = conn.execute(
-                'SELECT message_id FROM bot_messages WHERE chat_id = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 1',
-                (chat_id, user_id)
+                'SELECT message_id FROM bot_messages WHERE chat_id = ? AND user_id = ? AND message_type = ? ORDER BY timestamp DESC LIMIT 1',
+                (chat_id, user_id, msg_type)
             )
             row = cur.fetchone()
             return row[0] if row else None
@@ -690,7 +698,7 @@ def format_nearest_exam():
 
 async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     manager = DatabaseManager()
-    last_msg_id = manager.get_last_message(update.effective_chat.id, update.effective_user.id)
+    last_msg_id = manager.get_last_message(update.effective_chat.id, update.effective_user.id, 'manual')
     if last_msg_id:
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=last_msg_id)
@@ -715,7 +723,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + FOOTER_LINK
     )
     msg = await update.message.reply_text(text, parse_mode='HTML')
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -724,7 +732,7 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         format_schedule(get_day_name(today), get_week_type(today), today),
         parse_mode='HTML'
     )
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def tomorrow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -733,7 +741,7 @@ async def tomorrow_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         format_schedule(get_day_name(tmr), get_week_type(tmr), tmr),
         parse_mode='HTML'
     )
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def day_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -756,7 +764,7 @@ async def day_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             format_schedule(day, get_week_type(target), target),
             parse_mode='HTML'
         )
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -786,7 +794,7 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text += f"Неделя: {'1-я' if week_type == 'odd' else '2-я'}" + FOOTER_LINK
     msg = await update.message.reply_text(text, parse_mode='HTML')
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def setchat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -824,7 +832,7 @@ async def setchat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Thread ID — это ID топика в группе" + FOOTER_LINK,
             parse_mode='HTML'
         )
-        manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+        manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
         return
 
     manager.set_auto_chat(user_id, target_chat_id, target_thread_id)
@@ -837,7 +845,7 @@ async def setchat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Отключить: <code>/disable_auto</code>" + FOOTER_LINK,
         parse_mode='HTML'
     )
-    manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+    manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
 
 @with_cleanup
 async def disable_auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -847,7 +855,7 @@ async def disable_auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Автоотправка отключена." + FOOTER_LINK,
         parse_mode='HTML'
     )
-    DatabaseManager().save_message(update.effective_chat.id, user_id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
 
 @with_cleanup
 async def sendtext_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -861,7 +869,7 @@ async def sendtext_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Пример: <code>/sendtext Всем привет, встречаемся в 15:00!</code>" + FOOTER_LINK,
             parse_mode='HTML'
         )
-        manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+        manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
         return
 
     text_to_send = " ".join(context.args)
@@ -875,7 +883,7 @@ async def sendtext_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Используйте /setchat, чтобы указать чат и топик." + FOOTER_LINK,
             parse_mode='HTML'
         )
-        manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+        manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
         return
 
     try:
@@ -908,12 +916,12 @@ async def sendtext_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
 
-    manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+    manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
 
 @with_cleanup
 async def now_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("Бот работает!" + FOOTER_LINK, parse_mode='HTML')
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def exams_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -921,7 +929,7 @@ async def exams_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         format_exams_list(),
         parse_mode='HTML'
     )
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def nearexam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -929,7 +937,7 @@ async def nearexam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         format_nearest_exam(),
         parse_mode='HTML'
     )
-    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id)
+    DatabaseManager().save_message(update.effective_chat.id, update.effective_user.id, msg.message_id, 'manual')
 
 @with_cleanup
 async def setexam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -943,7 +951,7 @@ async def setexam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<b>Ошибка</b>\n\nЭкзамены не заполнены. Обратитесь к администратору." + FOOTER_LINK,
             parse_mode='HTML'
         )
-        manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+        manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
         return
 
     if update.effective_chat.type == "private":
@@ -978,7 +986,7 @@ async def setexam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Через 6 часов после начала (если есть следующий экзамен)" + FOOTER_LINK,
             parse_mode='HTML'
         )
-        manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+        manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
         return
 
     reminders_set = 0
@@ -1004,7 +1012,7 @@ async def setexam_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Используйте /nearexam для просмотра ближайшего экзамена" + FOOTER_LINK,
         parse_mode='HTML'
     )
-    manager.save_message(update.effective_chat.id, user_id, msg.message_id)
+    manager.save_message(update.effective_chat.id, user_id, msg.message_id, 'manual')
 
 async def send_exam_reminder(bot, chat_id, thread_id, exam, reminder_type):
     room_formatted = exam['room'].replace('"', "'")
@@ -1180,24 +1188,35 @@ async def exam_reminder_loop(application: Application):
             logging.error(f"Ошибка в цикле напоминаний об экзаменах: {e}")
             await asyncio.sleep(60)
 
-async def send_tomorrow_schedule(bot, chat_id, thread_id, week_type_tomorrow):
+async def send_tomorrow_schedule(bot, chat_id, thread_id, week_type_tomorrow, user_id):
     tomorrow = datetime.date.today() + datetime.timedelta(days=1)
     day_name = get_day_name(tomorrow)
     schedule_text = format_schedule(day_name, week_type_tomorrow, tomorrow)
 
+    manager = DatabaseManager()
+   
+    last_msg_id = manager.get_last_message(chat_id, user_id, 'auto')
+    if last_msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+        except Exception as e:
+            logging.warning(f"Не удалось удалить предыдущее сообщение автоотправки: {e}")
+
     if thread_id:
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=chat_id,
             text=schedule_text,
             parse_mode='HTML',
             message_thread_id=thread_id
         )
     else:
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=chat_id,
             text=schedule_text,
             parse_mode='HTML'
         )
+        
+    manager.save_message(chat_id, user_id, msg.message_id, 'auto')
 
 def get_last_lesson_end_time(day_name, week_type):
     lessons = SCHEDULE[week_type].get(day_name, [])
@@ -1278,7 +1297,7 @@ async def schedule_auto_send(app: Application):
 
     for user_id, target_chat_id, target_thread_id in manager.get_all_auto_chats():
         try:
-            await send_tomorrow_schedule(app.bot, target_chat_id, target_thread_id, tomorrow_week)
+            await send_tomorrow_schedule(app.bot, target_chat_id, target_thread_id, tomorrow_week, user_id)
             thread_info = f" (топик {target_thread_id})" if target_thread_id else ""
             logging.info(f"Отправлено пользователю {user_id} в чат {target_chat_id}{thread_info}")
             sent_count += 1
