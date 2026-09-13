@@ -459,7 +459,6 @@ SCHEDULE = {
   }
 }
 
-
 class DatabaseManager:
     def __init__(self):
         self.init_db()
